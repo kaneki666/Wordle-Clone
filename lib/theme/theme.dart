@@ -15,6 +15,7 @@ class WordleTheme {
 
   //colors
   static Color bgDark = const Color(0xff000000);
+  static Color bgSecondary = const Color(0xff191919);
   static Color greyColor = Colors.grey.withOpacity(0.8);
   static Color textColor = Colors.white.withOpacity(0.85);
   static Color blockDefault = Colors.white.withOpacity(0.1);
@@ -30,6 +31,10 @@ class WordleTheme {
   );
   static TextStyle wordTextHowTo = TextStyle(
     fontSize: 20,
+    color: textColor,
+  );
+  static TextStyle shareButton = TextStyle(
+    fontSize: 18,
     color: textColor,
   );
   static TextStyle keybordText = TextStyle(

@@ -28,7 +28,7 @@ class PopUpWidget extends StatelessWidget {
           color: popUpColor!,
           boxShadow: [
             BoxShadow(
-              color: popUpColor!.withOpacity(0.5),
+              color: popUpColor!.withOpacity(0.3),
               spreadRadius: 5,
               blurRadius: 5,
               offset: const Offset(0, 3), // changes position of shadow
