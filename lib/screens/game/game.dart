@@ -1,9 +1,11 @@
 import 'dart:math';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:intl/intl.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:wordle/components/game_finished_popup.dart';
 import 'package:wordle/components/pop_up.dart';
+import 'package:wordle/models/word_today.dart';
 import 'package:wordle/screens/game/components/game_header.dart';
 import 'package:http/http.dart' as http;
 import 'package:wordle/theme/theme.dart';
@@ -22,33 +24,45 @@ class _GameScreenState extends State<GameScreen> {
   List<List<String>> tilesShare = [[]];
 
   int activeRow = 0;
+  bool buttonDisabled = false;
   bool isPopUpshowed = false;
   bool gameFinished = false;
   bool solved = false;
   Color popUpColor = Colors.redAccent;
   String msg = '';
-  String word = '';
-
+  WordTodayModel? wordToday = const WordTodayModel(time: '', word: '');
   double angle = 0;
+
+  io.Socket? socket;
 
   saveDeviceInfo() async {
     DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
     AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+    DateTime now = DateTime.now();
+    DateFormat formatter = DateFormat('yyyy-MM-dd');
+    String dateToday = formatter.format(now);
+    // print(formatted); // 2016-01-25
 
-    IO.Socket socket = IO.io(api_url, <String, dynamic>{
-      "transports": ["websocket"],
-      "autoConnect": false,
+    setState(() {
+      socket = io.io(api_url, <String, dynamic>{
+        "transports": ["websocket"],
+        "autoConnect": false,
+      });
     });
-    socket.connect(); //connect the Socket.IO Client to the Server
+    socket!.connect(); //connect the Socket.IO Client to the Server
 
-    //SOCKET EVENTS
-    // --> listening for connection
-    socket.on('connect', (data) {
-      socket.emit('saveuser', androidInfo.androidId);
+    Object queryData = {"id": androidInfo.androidId, "time": dateToday};
+    socket!.on('connect', (
+      data,
+    ) {
+      socket!.emit(
+        'saveuser',
+        queryData,
+      );
     });
-    socket.on('sendword', (data) {
+    socket!.on('sendword', (data) {
       setState(() {
-        word = data;
+        wordToday = WordTodayModel.fromJson(data);
       });
     });
   }
@@ -89,15 +103,15 @@ class _GameScreenState extends State<GameScreen> {
   getTileColor(String letter, int index) {
     List<Color> currentColor = getCurrentCollorArr();
     List<String> currentTilesShare = getCurrentTilesShareArr();
-    bool isCorrectLetter = word.contains(letter);
+    bool isCorrectLetter = wordToday!.word!.contains(letter);
 
     if (!isCorrectLetter) {
       setState(() {
-        currentColor.add(WordleTheme.blockDefault);
+        currentColor.add(WordleTheme.greyColor.withOpacity(0.3));
         currentTilesShare.add('⬛');
       });
     } else {
-      String letterInThatPosition = word[index];
+      String letterInThatPosition = wordToday!.word![index];
       bool isCorrectPosition = letter == letterInThatPosition;
 
       if (isCorrectPosition) {
@@ -115,8 +129,11 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   handleWordSubmit() async {
+    setState(() {
+      buttonDisabled = true;
+    });
     if (!gameFinished) {
-      List<String> currentWordArr = await getCurrentWordArr();
+      List<String> currentWordArr = getCurrentWordArr();
 
       if (currentWordArr.length < 5) {
         setState(() {
@@ -133,7 +150,7 @@ class _GameScreenState extends State<GameScreen> {
         String currentWord = currentWordArr.join("");
 
         var res = await http.get(Uri.parse(
-            'https://api.wordnik.com/v4/word.json/${currentWord.toLowerCase()}/definitions?limit=1&includeRelated=false&useCanonical=false&includeTags=false&api_key=c8foz6t403jwjipol5hgu0t1vabxwsu51j1vsx68ddwpk8ryq'));
+            'https://api.dictionaryapi.dev/api/v2/entries/en/$currentWord'));
 
         if (res.statusCode == 404) {
           setState(() {
@@ -149,24 +166,41 @@ class _GameScreenState extends State<GameScreen> {
           });
         } else if (res.statusCode == 200) {
           for (int i = 0; i < currentWord.length; i++) {
-            await getTileColor(currentWordArr[i], i);
+            getTileColor(currentWordArr[i], i);
           }
           setState(() {
             angle = (angle + pi) % (2 * pi);
           });
+          DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+          AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+          String d = '';
 
+          for (int i = 0; i < tilesShare[0].length; i += 5) {
+            d = d + tilesShare[0].sublist(i, i + 5).join('') + "\n";
+          }
           Future.delayed(const Duration(milliseconds: 400), () {
             setState(() {
               angle = 0;
             });
           });
-          if (currentWord == word) {
+          if (currentWord == wordToday!.word!) {
+            Object dataSave = {
+              "id": androidInfo.androidId,
+              "guesses": guessedWords.length,
+              "guessWord": {
+                "time": wordToday!.time,
+                "guess": d,
+                "correct": true,
+                "word": guessedWords
+              }
+            };
+            socket!.emit('savefoddlestat', dataSave);
             setState(() {
               isPopUpshowed = true;
               popUpColor = Colors.greenAccent;
               msg = 'Congrats';
               gameFinished = true;
-              solved = true;
+              solved = false;
             });
             Future.delayed(const Duration(milliseconds: 2000), () {
               setState(() {
@@ -174,36 +208,51 @@ class _GameScreenState extends State<GameScreen> {
                 msg = '';
               });
             });
-          }
-          if (guessedWords.length == 6) {
-            setState(() {
-              isPopUpshowed = true;
-              popUpColor = Colors.redAccent;
-              msg = 'Failed word is $word';
-              activeRow = 6;
-              gameFinished = true;
-            });
-            Future.delayed(const Duration(milliseconds: 5000), () {
+          } else {
+            if (guessedWords.length == 6) {
+              Object dataSave = {
+                "id": androidInfo.androidId,
+                "guesses": guessedWords.length,
+                "guessWord": {
+                  "time": wordToday!.time,
+                  "guess": d,
+                  "correct": false,
+                  "word": guessedWords
+                }
+              };
+              socket!.emit('savefoddlestat', dataSave);
               setState(() {
-                isPopUpshowed = false;
-                msg = '';
+                isPopUpshowed = true;
+                popUpColor = Colors.redAccent;
+                msg = 'Failed word is ${wordToday!.word!}';
+                activeRow = 6;
+                gameFinished = true;
               });
-            });
+              Future.delayed(const Duration(milliseconds: 5000), () {
+                setState(() {
+                  isPopUpshowed = false;
+                  msg = '';
+                });
+              });
+            }
           }
+
           if (guessedWords.length != 6) {
             guessedWords.add([]);
             tilesColors.add([]);
+
+            setState(() {
+              activeRow = activeRow + 1;
+            });
           }
-          setState(() {
-            if (activeRow < 6) {
-              setState(() {
-                activeRow = activeRow + 1;
-              });
-            }
-          });
         }
       }
     }
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      setState(() {
+        buttonDisabled = false;
+      });
+    });
   }
 
   @override
@@ -222,7 +271,7 @@ class _GameScreenState extends State<GameScreen> {
         child: Padding(
           padding: EdgeInsets.only(
               left: WordleTheme.paddingM, right: WordleTheme.paddingM),
-          child: word == ''
+          child: wordToday!.word! == ''
               ? const Center(
                   child: CircularProgressIndicator(
                     color: Colors.greenAccent,
@@ -618,26 +667,26 @@ class _GameScreenState extends State<GameScreen> {
                                 itemCount: alphabets1.length,
                                 scrollDirection: Axis.horizontal,
                                 itemBuilder: (BuildContext context, int index) {
-                                  return GestureDetector(
-                                    onTap: () {
-                                      updateGuessedWords(alphabets1[index]);
-                                    },
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(3.0),
-                                      child: Container(
-                                        height: ((size.width -
-                                                    WordleTheme.paddingM * 2) /
-                                                10) +
-                                            15,
-                                        width: (size.width -
-                                                WordleTheme.paddingM * 2 -
-                                                60) /
-                                            10,
-                                        decoration: BoxDecoration(
-                                          color: WordleTheme.buttonColor,
-                                          borderRadius: BorderRadius.circular(
-                                              WordleTheme.borderRadiusS),
-                                        ),
+                                  return Padding(
+                                    padding: const EdgeInsets.all(3.0),
+                                    child: Container(
+                                      height: ((size.width -
+                                                  WordleTheme.paddingM * 2) /
+                                              10) +
+                                          15,
+                                      width: (size.width -
+                                              WordleTheme.paddingM * 2 -
+                                              60) /
+                                          10,
+                                      decoration: BoxDecoration(
+                                        color: WordleTheme.buttonColor,
+                                        borderRadius: BorderRadius.circular(
+                                            WordleTheme.borderRadiusS),
+                                      ),
+                                      child: TextButton(
+                                        onPressed: () {
+                                          updateGuessedWords(alphabets1[index]);
+                                        },
                                         child: Center(
                                           child: Text(
                                             alphabets1[index],
@@ -675,27 +724,27 @@ class _GameScreenState extends State<GameScreen> {
                                   scrollDirection: Axis.horizontal,
                                   itemBuilder:
                                       (BuildContext context, int index) {
-                                    return GestureDetector(
-                                      onTap: () {
-                                        updateGuessedWords(alphabets2[index]);
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(3.0),
-                                        child: Container(
-                                          height: ((size.width -
-                                                      WordleTheme.paddingM *
-                                                          2) /
-                                                  10) +
-                                              15,
-                                          width: (size.width -
-                                                  WordleTheme.paddingM * 2 -
-                                                  60) /
-                                              10,
-                                          decoration: BoxDecoration(
-                                            color: WordleTheme.buttonColor,
-                                            borderRadius: BorderRadius.circular(
-                                                WordleTheme.borderRadiusS),
-                                          ),
+                                    return Padding(
+                                      padding: const EdgeInsets.all(3.0),
+                                      child: Container(
+                                        height: ((size.width -
+                                                    WordleTheme.paddingM * 2) /
+                                                10) +
+                                            15,
+                                        width: (size.width -
+                                                WordleTheme.paddingM * 2 -
+                                                60) /
+                                            10,
+                                        decoration: BoxDecoration(
+                                          color: WordleTheme.buttonColor,
+                                          borderRadius: BorderRadius.circular(
+                                              WordleTheme.borderRadiusS),
+                                        ),
+                                        child: TextButton(
+                                          onPressed: () {
+                                            updateGuessedWords(
+                                                alphabets2[index]);
+                                          },
                                           child: Center(
                                             child: Text(
                                               alphabets2[index],
@@ -721,27 +770,29 @@ class _GameScreenState extends State<GameScreen> {
                                   return Padding(
                                     padding: const EdgeInsets.all(3.0),
                                     child: alphabets3[index] == "ENTER"
-                                        ? GestureDetector(
-                                            onTap: handleWordSubmit,
-                                            child: Container(
-                                              height: ((size.width -
-                                                          WordleTheme.paddingM *
-                                                              2) /
-                                                      10) +
-                                                  15,
-                                              width: ((size.width -
-                                                          WordleTheme.paddingM *
-                                                              2 -
-                                                          60) /
-                                                      10) +
-                                                  30,
-                                              decoration: BoxDecoration(
-                                                color: WordleTheme.buttonColor,
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                        WordleTheme
-                                                            .borderRadiusS),
-                                              ),
+                                        ? Container(
+                                            height: ((size.width -
+                                                        WordleTheme.paddingM *
+                                                            2) /
+                                                    10) +
+                                                15,
+                                            width: ((size.width -
+                                                        WordleTheme.paddingM *
+                                                            2 -
+                                                        60) /
+                                                    10) +
+                                                30,
+                                            decoration: BoxDecoration(
+                                              color: WordleTheme.buttonColor,
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                      WordleTheme
+                                                          .borderRadiusS),
+                                            ),
+                                            child: TextButton(
+                                              onPressed: buttonDisabled
+                                                  ? () {}
+                                                  : handleWordSubmit,
                                               child: Center(
                                                 child: Text(
                                                   alphabets3[index],
@@ -752,30 +803,30 @@ class _GameScreenState extends State<GameScreen> {
                                             ),
                                           )
                                         : alphabets3[index] == "DEL"
-                                            ? GestureDetector(
-                                                onTap: removeGuessedWords,
-                                                child: Container(
-                                                  height: ((size.width -
-                                                              WordleTheme
-                                                                      .paddingM *
-                                                                  2) /
-                                                          10) +
-                                                      15,
-                                                  width: ((size.width -
-                                                              WordleTheme
-                                                                      .paddingM *
-                                                                  2 -
-                                                              60) /
-                                                          10) +
-                                                      10,
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        WordleTheme.buttonColor,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
+                                            ? Container(
+                                                height: ((size.width -
                                                             WordleTheme
-                                                                .borderRadiusS),
-                                                  ),
+                                                                    .paddingM *
+                                                                2) /
+                                                        10) +
+                                                    15,
+                                                width: ((size.width -
+                                                            WordleTheme
+                                                                    .paddingM *
+                                                                2 -
+                                                            60) /
+                                                        10) +
+                                                    10,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      WordleTheme.buttonColor,
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          WordleTheme
+                                                              .borderRadiusS),
+                                                ),
+                                                child: TextButton(
+                                                  onPressed: removeGuessedWords,
                                                   child: Center(
                                                     child: Icon(
                                                       Icons.backspace,
@@ -785,31 +836,31 @@ class _GameScreenState extends State<GameScreen> {
                                                   ),
                                                 ),
                                               )
-                                            : GestureDetector(
-                                                onTap: () {
-                                                  updateGuessedWords(
-                                                      alphabets3[index]);
-                                                },
-                                                child: Container(
-                                                  height: ((size.width -
-                                                              WordleTheme
-                                                                      .paddingM *
-                                                                  2) /
-                                                          10) +
-                                                      15,
-                                                  width: (size.width -
-                                                          WordleTheme.paddingM *
-                                                              2 -
-                                                          60) /
-                                                      10,
-                                                  decoration: BoxDecoration(
-                                                    color:
-                                                        WordleTheme.buttonColor,
-                                                    borderRadius:
-                                                        BorderRadius.circular(
+                                            : Container(
+                                                height: ((size.width -
                                                             WordleTheme
-                                                                .borderRadiusS),
-                                                  ),
+                                                                    .paddingM *
+                                                                2) /
+                                                        10) +
+                                                    15,
+                                                width: (size.width -
+                                                        WordleTheme.paddingM *
+                                                            2 -
+                                                        60) /
+                                                    10,
+                                                decoration: BoxDecoration(
+                                                  color:
+                                                      WordleTheme.buttonColor,
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          WordleTheme
+                                                              .borderRadiusS),
+                                                ),
+                                                child: TextButton(
+                                                  onPressed: () {
+                                                    updateGuessedWords(
+                                                        alphabets3[index]);
+                                                  },
                                                   child: Center(
                                                     child: Text(
                                                       alphabets3[index],

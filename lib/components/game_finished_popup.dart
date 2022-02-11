@@ -24,7 +24,7 @@ class GameFinishedPopUpWidget extends StatelessWidget {
     for (int i = 0; i < tilesShare![0].length; i += 5) {
       d = d + tilesShare![0].sublist(i, i + 5).join('') + "\n";
     }
-    print(d);
+
     int totalGuess = userGuesses.fold(0, (sum, next) => sum + next.number!);
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 700),
