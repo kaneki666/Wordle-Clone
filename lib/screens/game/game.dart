@@ -5,9 +5,11 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:wordle/components/game_finished_popup.dart';
 import 'package:wordle/components/pop_up.dart';
+import 'package:wordle/models/user.dart';
 import 'package:wordle/models/word_today.dart';
 import 'package:wordle/screens/game/components/game_header.dart';
 import 'package:http/http.dart' as http;
+import 'package:wordle/screens/stats/stats.dart';
 import 'package:wordle/theme/theme.dart';
 import 'package:wordle/utils/data.dart';
 
@@ -28,10 +30,13 @@ class _GameScreenState extends State<GameScreen> {
   bool isPopUpshowed = false;
   bool gameFinished = false;
   bool solved = false;
+  bool playedToday = false;
   Color popUpColor = Colors.redAccent;
   String msg = '';
   WordTodayModel? wordToday = const WordTodayModel(time: '', word: '');
   double angle = 0;
+
+  UserModel userStat = const UserModel();
 
   io.Socket? socket;
 
@@ -60,11 +65,27 @@ class _GameScreenState extends State<GameScreen> {
         queryData,
       );
     });
-    socket!.on('sendword', (data) {
+    socket!.on('playedtoday', (dataPlayedToday) {
       setState(() {
-        wordToday = WordTodayModel.fromJson(data);
+        playedToday = dataPlayedToday['playedToday'];
+        gameFinished = true;
+
+        userStat = UserModel.fromJson(dataPlayedToday['stats']);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StatsScreen(userStat: userStat),
+          ),
+        );
       });
     });
+    if (!playedToday) {
+      socket!.on('sendword', (data) {
+        setState(() {
+          wordToday = WordTodayModel.fromJson(data);
+        });
+      });
+    }
   }
 
   getCurrentWordArr() {
@@ -264,6 +285,7 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     Size size = MediaQuery.of(context).size;
+
     return Scaffold(
       body: SizedBox(
         height: size.height,
